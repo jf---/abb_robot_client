@@ -1057,12 +1057,15 @@ class RWSSubscription:
     def __init__(self, ws_url, header, handler):
         self.handler = handler
 
+        # Regexes match both RW6 and RW7 path formats in WebSocket messages
         self._signal_re = re.compile(r'<a\s+href="/rw/iosystem/signals/([^"]+);state"\s+rel="self"/?>.*<span\s+class="lvalue">([^<]+)<')
-        self._pers_re = re.compile(r'<a\s+href="/rw/rapid/symbol/data/RAPID/([^"]+);value"\s+rel="self"/?>.*<span\s+class="value">([^<]+)<')
+        # RW6: /rw/rapid/symbol/data/RAPID/{var};value  RW7: /rw/rapid/symbol/RAPID/{var}/data;value
+        self._pers_re = re.compile(r'<a\s+href="/rw/rapid/symbol/(?:data/)?RAPID/([^";]+?)(?:/data)?;value"\s+rel="self"/?>.*<span\s+class="value">([^<]+)<')
         self._elog_re = re.compile(r'<a\s+href="/rw/elog/0/([^"]+)"\s+rel="self"/?>.*<span\s+class="seqnum">([^<]+)<')
         self._exec_re = re.compile(r'<a\s+href="/rw/rapid/execution;ctrlexecstate"\s+rel="self"/?>.*<span\s+class="ctrlexecstate">([^<]+)<')
         self._opmode_re = re.compile(r'<a\s+href="/rw/panel/opmode"\s+rel="self"/?>.*<span\s+class="opmode">([^<]+)<')
-        self._ctrl_re = re.compile(r'<a\s+href="/rw/panel/ctrlstate"\s+rel="self"/?>.*<span\s+class="ctrlstate">([^<]+)<')
+        # RW6: /rw/panel/ctrlstate  RW7: /rw/panel/ctrl-state
+        self._ctrl_re = re.compile(r'<a\s+href="/rw/panel/ctrl-?state"\s+rel="self"/?>.*<span\s+class="ctrlstate">([^<]+)<')
         self._ipc_re = re.compile(r'<a\s+href="/rw/dipc/([^"]*)".*<span\s+class="dipc-data">([^<]+)<.*<span\s+class="dipc-userdef">([^<]+)<')
 
         self.ws = websocket.WebSocketApp(

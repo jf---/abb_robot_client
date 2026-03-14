@@ -229,3 +229,52 @@ class TestRW6VsRW7Differences:
             )
             if rw6 is not None and rw7 is not None:
                 assert rw6 == rw7, f"{key}: RW6={rw6} != RW7={rw7}"
+
+
+class TestSubscriptionRegexCompat:
+    """Verify WebSocket message parsing regexes match both RW6 and RW7 path formats.
+
+    The subscription setup uses versioned paths, and the controller echoes those
+    paths in WebSocket messages. The regexes must handle both formats to avoid
+    silently dropping all events on one version.
+    """
+
+    @pytest.fixture()
+    def ctrl_re(self):
+        import re
+        return re.compile(r'<a\s+href="/rw/panel/ctrl-?state"\s+rel="self"/?>.*<span\s+class="ctrlstate">([^<]+)<')
+
+    @pytest.fixture()
+    def pers_re(self):
+        import re
+        return re.compile(r'<a\s+href="/rw/rapid/symbol/(?:data/)?RAPID/([^";]+?)(?:/data)?;value"\s+rel="self"/?>.*<span\s+class="value">([^<]+)<')
+
+    def test_ctrl_re_matches_rw6(self, ctrl_re):
+        """RW6 controller state path: /rw/panel/ctrlstate"""
+        msg = '<li class="pnl-ctrlstate-ev"><a href="/rw/panel/ctrlstate" rel="self"/><span class="ctrlstate">motoron</span></li>'
+        m = ctrl_re.search(msg)
+        assert m is not None
+        assert m.group(1) == "motoron"
+
+    def test_ctrl_re_matches_rw7(self, ctrl_re):
+        """RW7 controller state path: /rw/panel/ctrl-state (hyphenated)"""
+        msg = '<li class="pnl-ctrlstate-ev"><a href="/rw/panel/ctrl-state" rel="self"/><span class="ctrlstate">motoron</span></li>'
+        m = ctrl_re.search(msg)
+        assert m is not None
+        assert m.group(1) == "motoron"
+
+    def test_pers_re_matches_rw6(self, pers_re):
+        """RW6 pers var path: /rw/rapid/symbol/data/RAPID/{task}/{var};value"""
+        msg = '<li class="rap-data"><a href="/rw/rapid/symbol/data/RAPID/T_ROB1/Module1/myvar;value" rel="self"/><span class="value">42</span></li>'
+        m = pers_re.search(msg)
+        assert m is not None
+        assert m.group(1) == "T_ROB1/Module1/myvar"
+        assert m.group(2) == "42"
+
+    def test_pers_re_matches_rw7(self, pers_re):
+        """RW7 pers var path: /rw/rapid/symbol/RAPID/{task}/{var}/data;value"""
+        msg = '<li class="rap-data"><a href="/rw/rapid/symbol/RAPID/T_ROB1/Module1/myvar/data;value" rel="self"/><span class="value">42</span></li>'
+        m = pers_re.search(msg)
+        assert m is not None
+        assert m.group(1) == "T_ROB1/Module1/myvar"
+        assert m.group(2) == "42"

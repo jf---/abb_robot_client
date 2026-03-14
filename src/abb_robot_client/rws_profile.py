@@ -248,7 +248,8 @@ _ENDPOINTS: dict[str, dict[RobotWareVersion, str]] = {
 _all_versions = set(RobotWareVersion)
 for _op, _mapping in _ENDPOINTS.items():
     _missing = _all_versions - _mapping.keys()
-    assert not _missing, f"_ENDPOINTS[{_op!r}] missing versions: {_missing}"
+    if _missing:
+        raise ValueError(f"_ENDPOINTS[{_op!r}] missing versions: {_missing}")
 del _all_versions, _op, _mapping, _missing
 
 # ---------------------------------------------------------------------------
