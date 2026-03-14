@@ -44,7 +44,7 @@ class TestRWSProfile:
         """RW6 (RobotWare 6) uses Digest auth, no extra headers."""
         assert RW6_PROFILE.auth_type == "digest"
         assert RW6_PROFILE.version is RobotWareVersion.RW6
-        assert RW6_PROFILE.headers == {}
+        assert len(RW6_PROFILE.headers) == 0
 
     def test_rw7_profile_auth(self):
         """RW7 (RobotWare 7) uses Basic auth with versioned Accept/Content-Type."""

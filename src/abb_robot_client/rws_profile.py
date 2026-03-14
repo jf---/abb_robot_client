@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from types import MappingProxyType
+from typing import Literal
 
 
 class RobotWareVersion(Enum):
@@ -34,8 +36,10 @@ class RWSProfile:
     """
 
     version: RobotWareVersion
-    auth_type: str  # "digest" or "basic"
-    headers: dict[str, str] = field(default_factory=dict)
+    auth_type: Literal["digest", "basic"]
+    headers: MappingProxyType[str, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def url(self, operation: str, **fmt: str) -> str:
         """Map logical operation name to version-specific URL path.
@@ -140,7 +144,7 @@ _ENDPOINTS: dict[str, dict[RobotWareVersion, str]] = {
         RobotWareVersion.RW6: "rw/motionsystem/mechunits/{mechunit}/robtarget",
         RobotWareVersion.RW7: "rw/motionsystem/mechunits/{mechunit}/robtarget",
     },
-    # Mastership
+    # Mastership (not yet called from rws.py — reserved for explicit mastership API)
     "mastership_req": {
         RobotWareVersion.RW6: "rw/mastership",
         RobotWareVersion.RW7: "rw/mastership/request",
@@ -176,7 +180,7 @@ _ENDPOINTS: dict[str, dict[RobotWareVersion, str]] = {
         RobotWareVersion.RW6: "rw/elog/{elog}/?lang=en",
         RobotWareVersion.RW7: "rw/elog/{elog}/?lang=en",
     },
-    # Program load
+    # Program load (not yet called from rws.py — reserved for program management API)
     "load_program": {
         RobotWareVersion.RW6: "rw/rapid/tasks/{task}/program?action=load",
         RobotWareVersion.RW7: "rw/rapid/tasks/{task}/program/load?mastership=implicit",
@@ -240,10 +244,6 @@ _ENDPOINTS: dict[str, dict[RobotWareVersion, str]] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Profile factories
-# ---------------------------------------------------------------------------
-
 # Validate all endpoints cover every version at import time
 _all_versions = set(RobotWareVersion)
 for _op, _mapping in _ENDPOINTS.items():
@@ -253,7 +253,7 @@ for _op, _mapping in _ENDPOINTS.items():
 del _all_versions, _op, _mapping, _missing
 
 # ---------------------------------------------------------------------------
-# Profile factories
+# Profile constants and factories
 # ---------------------------------------------------------------------------
 
 RW6_PROFILE = RWSProfile(
@@ -264,10 +264,12 @@ RW6_PROFILE = RWSProfile(
 RW7_PROFILE = RWSProfile(
     version=RobotWareVersion.RW7,
     auth_type="basic",
-    headers={
-        "Accept": "application/xhtml+xml;v=2.0",
-        "Content-Type": "application/x-www-form-urlencoded;v=2.0",
-    },
+    headers=MappingProxyType(
+        {
+            "Accept": "application/xhtml+xml;v=2.0",
+            "Content-Type": "application/x-www-form-urlencoded;v=2.0",
+        }
+    ),
 )
 
 
