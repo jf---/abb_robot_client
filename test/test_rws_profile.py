@@ -365,3 +365,154 @@ class TestSubscriptionRegexCompat:
         assert m is not None
         assert m.group(1) == "T_ROB1/Module1/myvar"
         assert m.group(2) == "42"
+
+
+class TestUrlCallSiteCrossReference:
+    """Verify every url() call in rws.py and rws_aio.py uses a valid endpoint key.
+
+    A typo like url("strat") instead of url("start") would only crash at runtime
+    when that specific code path runs on a production robot. This test statically
+    extracts all operation keys from the source and validates them against _ENDPOINTS.
+    """
+
+    @staticmethod
+    def _extract_url_keys(filepath: str) -> list[tuple[str, int]]:
+        """Parse source file for all .url("key" calls, return (key, line_number) pairs."""
+        import ast
+        from pathlib import Path
+
+        source = Path(filepath).read_text()
+        tree = ast.parse(source)
+        keys = []
+        for node in ast.walk(tree):
+            # Match: self._profile.url("key", ...) or PROFILE.url("key", ...)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "url"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                keys.append((node.args[0].value, node.lineno))
+        return keys
+
+    def test_rws_url_keys_all_valid(self):
+        """Every url() call in rws.py must reference a key that exists in _ENDPOINTS."""
+        from pathlib import Path
+
+        rws_path = Path(__file__).parent.parent / "src" / "abb_robot_client" / "rws.py"
+        keys = self._extract_url_keys(str(rws_path))
+        assert len(keys) > 30, f"Expected 30+ url() calls, found {len(keys)}"
+        for key, lineno in keys:
+            assert key in _ENDPOINTS, (
+                f"rws.py:{lineno} — url({key!r}) not in _ENDPOINTS"
+            )
+
+    def test_rws_aio_url_keys_all_valid(self):
+        """Every url() call in rws_aio.py must reference a key that exists in _ENDPOINTS."""
+        from pathlib import Path
+
+        aio_path = (
+            Path(__file__).parent.parent / "src" / "abb_robot_client" / "rws_aio.py"
+        )
+        keys = self._extract_url_keys(str(aio_path))
+        assert len(keys) > 30, f"Expected 30+ url() calls, found {len(keys)}"
+        for key, lineno in keys:
+            assert key in _ENDPOINTS, (
+                f"rws_aio.py:{lineno} — url({key!r}) not in _ENDPOINTS"
+            )
+
+    def test_no_dead_endpoints(self):
+        """Every _ENDPOINTS key should be referenced by at least one url() call.
+
+        Dead entries accumulate silently and may contain stale URLs that were never
+        validated against hardware.
+        """
+        from pathlib import Path
+
+        base = Path(__file__).parent.parent / "src" / "abb_robot_client"
+        all_keys = set()
+        for f in ["rws.py", "rws_aio.py"]:
+            all_keys.update(k for k, _ in self._extract_url_keys(str(base / f)))
+
+        # These are documented as reserved for future API methods
+        reserved = {"mastership_req", "mastership_rel", "load_program", "rmmp_cancel"}
+
+        for endpoint_key in _ENDPOINTS:
+            assert endpoint_key in all_keys or endpoint_key in reserved, (
+                f"_ENDPOINTS[{endpoint_key!r}] is never referenced in url() calls "
+                f"and is not in the reserved set"
+            )
+
+
+class TestDetectRobotwareVersion:
+    """Test the version detection probe logic using mocked HTTP responses.
+
+    detect_robotware_version makes two sequential HTTP requests to determine
+    whether the controller speaks RWS1 (Digest auth) or RWS2 (Basic auth).
+    """
+
+    def test_rw7_detected_on_basic_200(self):
+        """If Basic auth returns 200, controller is RW7."""
+        from unittest.mock import patch, MagicMock
+        from abb_robot_client.rws_profile import detect_robotware_version
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        with patch(
+            "abb_robot_client.rws_profile.requests.get", return_value=mock_resp
+        ) as mock_get:
+            result = detect_robotware_version("http://1.2.3.4", "user", "pass")
+
+        assert result is RobotWareVersion.RW7
+        mock_get.assert_called_once()
+
+    def test_rw6_detected_on_basic_401_then_digest_200(self):
+        """If Basic auth returns 401 and Digest returns 200, controller is RW6."""
+        from unittest.mock import patch, MagicMock
+        from abb_robot_client.rws_profile import detect_robotware_version
+
+        resp_401 = MagicMock()
+        resp_401.status_code = 401
+        resp_200 = MagicMock()
+        resp_200.status_code = 200
+
+        with patch(
+            "abb_robot_client.rws_profile.requests.get",
+            side_effect=[resp_401, resp_200],
+        ) as mock_get:
+            result = detect_robotware_version("http://1.2.3.4", "user", "pass")
+
+        assert result is RobotWareVersion.RW6
+        assert mock_get.call_count == 2
+
+    def test_unexpected_status_raises(self):
+        """If Basic auth returns non-200/non-401 (e.g. 403), raise immediately."""
+        from unittest.mock import patch, MagicMock
+        from abb_robot_client.rws_profile import detect_robotware_version
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+
+        with patch("abb_robot_client.rws_profile.requests.get", return_value=mock_resp):
+            with pytest.raises(RuntimeError, match="Unexpected HTTP 403"):
+                detect_robotware_version("http://1.2.3.4", "user", "pass")
+
+    def test_both_fail_raises(self):
+        """If Basic returns 401 and Digest returns non-200, raise with status."""
+        from unittest.mock import patch, MagicMock
+        from abb_robot_client.rws_profile import detect_robotware_version
+
+        resp_401 = MagicMock()
+        resp_401.status_code = 401
+        resp_500 = MagicMock()
+        resp_500.status_code = 500
+
+        with patch(
+            "abb_robot_client.rws_profile.requests.get",
+            side_effect=[resp_401, resp_500],
+        ):
+            with pytest.raises(RuntimeError, match="HTTP 500"):
+                detect_robotware_version("http://1.2.3.4", "user", "pass")

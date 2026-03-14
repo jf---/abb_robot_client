@@ -19,6 +19,9 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Literal
 
+import requests
+import requests.auth
+
 
 class RobotWareVersion(Enum):
     """RobotWare major version determining the RWS protocol variant."""
@@ -61,7 +64,9 @@ class RWSProfile:
 # Keys are logical operation names, values map version → URL template.
 # Templates use str.format() with named parameters.
 
-_ENDPOINTS: dict[str, dict[RobotWareVersion, str]] = {
+# Built as dict, then frozen to MappingProxyType after validation below
+_ENDPOINTS: MappingProxyType[str, MappingProxyType[RobotWareVersion, str]]
+_ENDPOINTS = {
     # Execution control
     "start": {
         RobotWareVersion.RW6: "rw/rapid/execution?action=start",
@@ -243,13 +248,15 @@ _ENDPOINTS: dict[str, dict[RobotWareVersion, str]] = {
     },
 }
 
-
-# Validate all endpoints cover every version at import time
+# Validate completeness and freeze — both the inner dicts and the outer dict
 _all_versions = set(RobotWareVersion)
 for _op, _mapping in _ENDPOINTS.items():
     _missing = _all_versions - _mapping.keys()
     if _missing:
         raise ValueError(f"_ENDPOINTS[{_op!r}] missing versions: {_missing}")
+_ENDPOINTS = MappingProxyType(
+    {k: MappingProxyType(v) for k, v in _ENDPOINTS.items()}
+)
 del _all_versions, _op, _mapping, _missing
 
 # ---------------------------------------------------------------------------
@@ -290,8 +297,6 @@ def detect_robotware_version(
     Strategy: GET ``/rw/system`` with Basic auth.
     If 200 → RW7.  If 401 → try Digest auth; if 200 → RW6.
     """
-    import requests
-
     # Try Basic auth first (RW7)
     resp = requests.get(
         f"{base_url}/rw/system",
