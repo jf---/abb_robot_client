@@ -1,21 +1,10 @@
-.. abb_robot_client documentation master file, created by
-   sphinx-quickstart on Tue Dec 27 02:14:13 2022.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+# abb_robot_client
 
-Welcome to abb_robot_client's documentation!
-============================================
+Python package providing clients for ABB robots using RWS (Robot Web Services) and Externally Guided Motion (EGM).
+This package currently supports IRC5 controllers running RobotWare 6.xx.
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+See the [README](https://github.com/johnwason/abb_robot_client) for installation and usage instructions.
 
-   readme
-   abb_robot_client/api_reference
+## Contents
 
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+- [API Reference](api/index.md)

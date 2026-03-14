@@ -1,9 +1,5 @@
-API Reference
-================
+# API Reference
 
-.. toctree::
-   :maxdepth: 2
-
-   api/rws
-   api/rws_aio
-   api/egm
+- [RWS (Robot Web Services)](rws.md)
+- [RWS AsyncIO](rws_aio.md)
+- [EGM (Externally Guided Motion)](egm.md)
