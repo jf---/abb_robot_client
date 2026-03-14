@@ -34,10 +34,18 @@ Documentation can be found at: https://abb_robot_client.readthedocs.org
 
 ## Installation
 
-`abb-robot-client` is avaliable on PyPi. Use the `[aio]` option to include support for asyncio:
+`abb-robot-client` is available on PyPi. Use the `[aio]` option to include support for asyncio:
 
 ```
 pip install abb-robot-client[aio]
+```
+
+For development, use [pixi](https://pixi.sh):
+
+```bash
+pixi install
+pixi run test
+pixi run docs  # serve docs locally
 ```
 
 ## Examples
