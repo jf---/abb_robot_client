@@ -49,6 +49,7 @@ nav:
   - Home: index.md
   - API Reference:
       - api/index.md
+      - RWS Profile: api/rws_profile.md
       - RWS: api/rws.md
       - RWS AsyncIO: api/rws_aio.md
       - EGM: api/egm.md

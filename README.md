@@ -3,17 +3,30 @@
 [![Python](https://img.shields.io/badge/python-3.6+-blue.svg)](https://github.com/rpiRobotics/abb_robot_client)
 ![PyPI](https://img.shields.io/pypi/v/abb-robot-client)
 
-Python package providing clients for ABB robots using RWS (Robot Web Services) and Externally Guided Motion (EGM). 
-This package currently supports IRC5 controllers running RobotWare 6.xx. It does not support RobotWare 7+.
+Python package providing clients for ABB robots using RWS (Robot Web Services) and Externally Guided Motion (EGM).
+Supports both RobotWare 6 (IRC5, RWS1) and RobotWare 7 (OmniCore, RWS2) controllers.
 
 This package is typically used with [abb-motion-program-exec](https://pypi.org/project/abb-motion-program-exec/),
 which provides a higher level interface to generate motion programs. `abb-motion-program-exec` includes the ability
 to initialize EGM operations, using this package to communicate with EGM.
 
-`abb_robot_client` includes three modules: `rws`, `rws_aio`, and `egm`. `rws` provides a synhronous client for Robot 
-Web Services (RWS) using HTTP REST, and the ability to create subscriptions using websockets. `rws_aio` provides 
+`abb_robot_client` includes three modules: `rws`, `rws_aio`, and `egm`. `rws` provides a synchronous client for Robot
+Web Services (RWS) using HTTP REST, and the ability to create subscriptions using websockets. `rws_aio` provides
 identical functionality to `rws`, but uses asyncio, with each method being `async`. `egm` provides an Externally
 Guided Motion (EGM) client.
+
+The RobotWare version is auto-detected when connecting (sync client), or can be specified explicitly:
+
+```python
+from abb_robot_client.rws import RWS
+from abb_robot_client import RobotWareVersion
+
+# Auto-detect (probes controller)
+client = RWS("http://192.168.125.1:80")
+
+# Explicit version (skips probe)
+client = RWS("http://192.168.125.1:80", version=RobotWareVersion.RW7)
+```
 
 A Robot Raconteur driver is also provided. This driver provides access to RWS and EGM.
 
