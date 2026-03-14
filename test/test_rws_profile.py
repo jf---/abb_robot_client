@@ -231,6 +231,87 @@ class TestRW6VsRW7Differences:
                 assert rw6 == rw7, f"{key}: RW6={rw6} != RW7={rw7}"
 
 
+class TestRW6BackwardCompatibility:
+    """Verify that RW6 profile URLs exactly match the old hardcoded strings.
+
+    Before the profile refactoring, every URL was a literal string in rws.py.
+    This test ensures the profile produces identical URLs, preventing regressions
+    that would break existing RW6 deployments.
+    """
+
+    @pytest.mark.parametrize(
+        "op,kwargs,expected",
+        [
+            ("start", {}, "rw/rapid/execution?action=start"),
+            ("stop", {}, "rw/rapid/execution?action=stop"),
+            ("resetpp", {}, "rw/rapid/execution?action=resetpp"),
+            ("get_execution", {}, "rw/rapid/execution"),
+            (
+                "activate_task",
+                {"task": "T_ROB1"},
+                "rw/rapid/tasks/T_ROB1?action=activate",
+            ),
+            (
+                "deactivate_task",
+                {"task": "T_ROB1"},
+                "rw/rapid/tasks/T_ROB1?action=deactivate",
+            ),
+            ("get_tasks", {}, "rw/rapid/tasks"),
+            ("get_ctrl_state", {}, "rw/panel/ctrlstate"),
+            ("set_ctrl_state", {}, "rw/panel/ctrlstate?action=setctrlstate"),
+            ("get_opmode", {}, "rw/panel/opmode"),
+            ("get_speedratio", {}, "rw/panel/speedratio"),
+            ("set_speedratio", {}, "rw/panel/speedratio?action=setspeedratio"),
+            (
+                "get_io",
+                {"network": "Local", "unit": "DRV_1", "signal": "do1"},
+                "rw/iosystem/signals/Local/DRV_1/do1",
+            ),
+            (
+                "set_io",
+                {"network": "Local", "unit": "DRV_1", "signal": "do1"},
+                "rw/iosystem/signals/Local/DRV_1/do1?action=set",
+            ),
+            (
+                "get_rapid_var",
+                {"var": "T_ROB1/myvar"},
+                "rw/rapid/symbol/data/RAPID/T_ROB1/myvar",
+            ),
+            (
+                "set_rapid_var",
+                {"var": "T_ROB1/myvar"},
+                "rw/rapid/symbol/data/RAPID/T_ROB1/myvar?action=set",
+            ),
+            ("search_symbols", {}, "rw/rapid/symbols?action=search-symbols"),
+            (
+                "get_jointtarget",
+                {"mechunit": "ROB_1"},
+                "rw/motionsystem/mechunits/ROB_1/jointtarget",
+            ),
+            (
+                "get_robtarget",
+                {"mechunit": "ROB_1"},
+                "rw/motionsystem/mechunits/ROB_1/robtarget",
+            ),
+            ("ramdisk", {}, "ctrl/$RAMDISK"),
+            ("elog", {"elog": "0"}, "rw/elog/0/?lang=en"),
+            ("fileservice", {"path": "HOME/test.mod"}, "fileservice/HOME/test.mod"),
+            ("rmmp", {}, "users/rmmp"),
+            ("rmmp_poll", {}, "users/rmmp/poll"),
+            ("subscription", {}, "subscription"),
+            ("logout", {}, "logout"),
+            ("dipc_create", {}, "rw/dipc?action=dipc-create"),
+            ("dipc_read", {"queue": "myq"}, "rw/dipc/myq?action=dipc-read"),
+            ("dipc_send", {"queue": "myq"}, "rw/dipc/myq?action=dipc-send"),
+            ("dipc_get", {"queue": "myq"}, "rw/dipc/myq"),
+        ],
+        ids=lambda x: x if isinstance(x, str) and not x.startswith("rw") else "",
+    )
+    def test_rw6_url_matches_original(self, op, kwargs, expected):
+        """Each RW6 profile URL must exactly match the old hardcoded string."""
+        assert RW6_PROFILE.url(op, **kwargs) == expected
+
+
 class TestSubscriptionRegexCompat:
     """Verify WebSocket message parsing regexes match both RW6 and RW7 path formats.
 
@@ -242,12 +323,18 @@ class TestSubscriptionRegexCompat:
     @pytest.fixture()
     def ctrl_re(self):
         import re
-        return re.compile(r'<a\s+href="/rw/panel/ctrl-?state"\s+rel="self"/?>.*<span\s+class="ctrlstate">([^<]+)<')
+
+        return re.compile(
+            r'<a\s+href="/rw/panel/ctrl-?state"\s+rel="self"/?>.*<span\s+class="ctrlstate">([^<]+)<'
+        )
 
     @pytest.fixture()
     def pers_re(self):
         import re
-        return re.compile(r'<a\s+href="/rw/rapid/symbol/(?:data/)?RAPID/([^";]+?)(?:/data)?;value"\s+rel="self"/?>.*<span\s+class="value">([^<]+)<')
+
+        return re.compile(
+            r'<a\s+href="/rw/rapid/symbol/(?:data/)?RAPID/([^";]+?)(?:/data)?;value"\s+rel="self"/?>.*<span\s+class="value">([^<]+)<'
+        )
 
     def test_ctrl_re_matches_rw6(self, ctrl_re):
         """RW6 controller state path: /rw/panel/ctrlstate"""
