@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import struct
 import numpy as np
 import io
@@ -28,6 +30,7 @@ import websockets
 from .rws import ABBException, RAPIDExecutionState, EventLogEntry, EventLogEntryEvent, TaskState, JointTarget, \
     RobTarget, IpcMessage, Signal, ControllerState, OperationalMode, VariableValue, SubscriptionResourceType, \
     SubscriptionResourcePriority, SubscriptionResourceRequest, SubscriptionException, SubscriptionClosed
+from .rws_profile import RobotWareVersion, _make_profile
 
 class RWS_AIO:
     """
@@ -40,14 +43,32 @@ class RWS_AIO:
     :param username: The HTTP username for the robot. Defaults to 'Default User'
     :param password: The HTTP password for the robot. Defaults to 'robotics'
     """
-    def __init__(self, base_url='http://127.0.0.1:80', username=None, password=None):
+    def __init__(self, base_url='http://127.0.0.1:80', username=None, password=None,
+                 version: RobotWareVersion | None = None):
         self.base_url=base_url
         if username is None:
             username = 'Default User'
         if password is None:
             password = 'robotics'
-        self.auth=httpx.DigestAuth(username, password)
+
+        if version is None:
+            raise ValueError(
+                "RWS_AIO requires an explicit 'version' parameter "
+                "(RobotWareVersion.RW6 or RobotWareVersion.RW7) to avoid "
+                "blocking the event loop. Use detect_robotware_version() "
+                "before constructing RWS_AIO, or pass version directly."
+            )
+
+        self._profile = _make_profile(version)
+
+        if self._profile.auth_type == "digest":
+            self.auth = httpx.DigestAuth(username, password)
+        else:
+            self.auth = httpx.BasicAuth(username, password)
+
         self._session=httpx.AsyncClient(auth=self.auth)
+        if self._profile.headers:
+            self._session.headers.update(self._profile.headers)
         self._rmmp_session=None
         self._rmmp_session_t=None
         self._websocket = None
@@ -78,12 +99,12 @@ class RWS_AIO:
         finally:
             await res.aclose()
 
-    def _process_response(self, response):        
-        
-        if (response.status_code == 503):
+    def _process_response(self, response):
+
+        if response.status_code == 500:
             raise Exception("Robot returning 500 Internal Server Error")
 
-        if (response.status_code == 503):
+        if response.status_code == 503:
             raise Exception("Robot returning 503 too many active connections")
 
         if response.status_code == 204:
@@ -91,9 +112,9 @@ class RWS_AIO:
 
         response_json = None
         if response.headers["Content-Type"] == 'application/json' and len(response.content) > 0:
-            try:            
+            try:
                 response_json = response.json()
-            except:
+            except ValueError:
                 if not response.text.startswith("<?xml"):
                     raise
     
@@ -120,7 +141,7 @@ class RWS_AIO:
         """
         rob_tasks = await self.get_tasks()
         for t in tasks:
-            if t not in rob_tasks
+            if t not in rob_tasks:
                 raise Exception(f"Cannot start unknown task {t}")
 
         for rob_task in rob_tasks.values():
@@ -128,13 +149,13 @@ class RWS_AIO:
                 continue
             if rob_task.name in tasks:
                 if not rob_task.active:
-                    self.activate_task(rob_task.name)
+                    await self.activate_task(rob_task.name)
             else:
                 if rob_task.active:
-                    self.deactivate_task(rob_task.name)
+                    await self.deactivate_task(rob_task.name)
 
         payload={"regain": "continue", "execmode": "continue" , "cycle": cycle, "condition": "none", "stopatbp": "disabled", "alltaskbytsp": "true"}
-        res=await self._do_post("rw/rapid/execution?action=start", payload)
+        res=await self._do_post(self._profile.url("start"), payload)
 
     async def activate_task(self, task: str):
         """
@@ -143,7 +164,7 @@ class RWS_AIO:
         :param task: The name of the task to activate
         """
         payload={}
-        await self._do_post(f"rw/rapid/tasks/{task}?action=activate",payload)
+        await self._do_post(self._profile.url("activate_task", task=task), payload)
 
     async def deactivate_task(self, task: str):
         """
@@ -152,20 +173,20 @@ class RWS_AIO:
         :param task: The name of the task to activate
         """
         payload={}
-        await self._do_post(f"rw/rapid/tasks/{task}?action=deactivate",payload)
+        await self._do_post(self._profile.url("deactivate_task", task=task), payload)
 
     async def stop(self):
         """
         Stop RAPID execution of normal tasks
         """
         payload={"stopmode": "stop"}
-        res=await self._do_post("rw/rapid/execution?action=stop", payload)
+        res=await self._do_post(self._profile.url("stop"), payload)
 
     async def resetpp(self):
         """
         Reset RAPID program pointer to main in normal tasks
         """
-        res=await self._do_post("rw/rapid/execution?action=resetpp")
+        res=await self._do_post(self._profile.url("resetpp"))
 
     async def get_ramdisk_path(self) -> str:
         """
@@ -173,7 +194,7 @@ class RWS_AIO:
 
         :return: The RAMDISK path
         """
-        res_json = await self._do_get("ctrl/$RAMDISK")
+        res_json = await self._do_get(self._profile.url("ramdisk"))
         return res_json["_embedded"]["_state"][0]["_value"]
 
     async def get_execution_state(self) -> RAPIDExecutionState:
@@ -182,7 +203,7 @@ class RWS_AIO:
 
         :return: The RAPID execution state
         """
-        res_json = await self._do_get("rw/rapid/execution")
+        res_json = await self._do_get(self._profile.url("get_execution"))
         state = res_json["_embedded"]["_state"][0]
         ctrlexecstate=state["ctrlexecstate"]
         cycle=state["cycle"]
@@ -198,13 +219,13 @@ class RWS_AIO:
 
         :return: The controller state
         """
-        res_json = await self._do_get("rw/panel/ctrlstate")
+        res_json = await self._do_get(self._profile.url("get_ctrl_state"))
         state = res_json["_embedded"]["_state"][0]
         return state['ctrlstate']
 
     async def set_controller_state(self, ctrl_state):
         payload = {"ctrl-state": ctrl_state}
-        res=await self._do_post("rw/panel/ctrlstate?action=setctrlstate", payload)
+        res=await self._do_post(self._profile.url("set_ctrl_state"), payload)
     
     async def get_operation_mode(self) -> str:
         """
@@ -216,7 +237,7 @@ class RWS_AIO:
         
         :return: The controller operational mode.
         """
-        res_json = await self._do_get("rw/panel/opmode")        
+        res_json = await self._do_get(self._profile.url("get_opmode"))        
         state = res_json["_embedded"]["_state"][0]
         return state["opmode"]
     
@@ -229,10 +250,10 @@ class RWS_AIO:
         :param unit: The drive unit of the signal. The default `DRV_1` will work for most signals.
         :return: The value of the signal. Typically 1 for ON and 0 for OFF
         """
-        res_json = await self._do_get("rw/iosystem/signals/" + network + "/" + unit + "/" + signal)
+        res_json = await self._do_get(self._profile.url("get_io", network=network, unit=unit, signal=signal))
         state = res_json["_embedded"]["_state"][0]["lvalue"]
         return int(state)
-    
+
     async def set_digital_io(self, signal: str, value: Union[bool,int], network: str='Local', unit: str='DRV_1'):
         """
         Set the value of an digital IO signal.
@@ -244,7 +265,7 @@ class RWS_AIO:
         """
         lvalue = '1' if bool(value) else '0'
         payload={'lvalue': lvalue}
-        res=await self._do_post("rw/iosystem/signals/" + network + "/" + unit + "/" + signal + "?action=set", payload)
+        res=await self._do_post(self._profile.url("set_io", network=network, unit=unit, signal=signal), payload)
 
     async def get_analog_io(self, signal: str, network: str='Local', unit: str='DRV_1') -> float:
         """
@@ -255,10 +276,10 @@ class RWS_AIO:
         :param unit: The drive unit of the signal. The default `DRV_1` will work for most signals.
         :return: The value of the signal
         """
-        res_json = await self._do_get("rw/iosystem/signals/" + network + "/" + unit + "/" + signal)
+        res_json = await self._do_get(self._profile.url("get_io", network=network, unit=unit, signal=signal))
         state = res_json["_embedded"]["_state"][0]["lvalue"]
         return float(state)
-    
+
     async def set_analog_io(self, signal: str, value: int, network: str='Local', unit: str='DRV_1'):
         """
         Set the value of an analog IO signal.
@@ -269,7 +290,7 @@ class RWS_AIO:
         :param unit: The drive unit of the signal. The default `DRV_1` will work for most signals.
         """
         payload={"mode": "value",'lvalue': value}
-        res=await self._do_post("rw/iosystem/signals/" + network + "/" + unit + "/" + signal + "?action=set", payload)
+        res=await self._do_post(self._profile.url("set_io", network=network, unit=unit, signal=signal), payload)
     
     async def get_rapid_variables(self, task: str="T_ROB1") -> str:
         """
@@ -290,7 +311,7 @@ class RWS_AIO:
             "posl": "0",
             "posc": "0"
         }
-        res_json = await self._do_post(f"rw/rapid/symbols?action=search-symbols", payload)
+        res_json = await self._do_post(self._profile.url("search_symbols"), payload)
         state = res_json["_embedded"]["_state"]
         return state
 
@@ -306,10 +327,10 @@ class RWS_AIO:
             var1 = f"{task}/{var}"
         else:
             var1 = var
-        res_json = await self._do_get("rw/rapid/symbol/data/RAPID/" + var1)
+        res_json = await self._do_get(self._profile.url("get_rapid_var", var=var1))
         state = res_json["_embedded"]["_state"][0]["value"]
         return state
-    
+
     async def set_rapid_variable(self, var: str, value: str, task: str = "T_ROB1"):
         """
         Set value of a RAPID pers variable
@@ -320,10 +341,10 @@ class RWS_AIO:
         """
         payload={'value': value}
         if task is not None:
-            var1 = f"{task}/var"
+            var1 = f"{task}/{var}"
         else:
             var1 = var
-        res=await self._do_post("rw/rapid/symbol/data/RAPID/" + var1 + "?action=set", payload)
+        res=await self._do_post(self._profile.url("set_rapid_var", var=var1), payload)
         
     async def read_file(self, filename: str) -> bytes:
         """
@@ -332,11 +353,11 @@ class RWS_AIO:
         :param filename: The filename to read
         :return: The file bytes
         """
-        url="/".join([self.base_url, "fileservice", filename])
+        url="/".join([self.base_url, self._profile.url("fileservice", path=filename)])
         res=await self._session.get(url)
         if not res.is_success:
             raise Exception(f"File not found {filename}")
-        try:            
+        try:
             return res.content
         finally:
             await res.aclose()
@@ -348,7 +369,7 @@ class RWS_AIO:
         :param filename: The filename to write
         :param contents: The file content bytes
         """
-        url="/".join([self.base_url, "fileservice" , filename])
+        url="/".join([self.base_url, self._profile.url("fileservice", path=filename)])
         res=await self._session.put(url, content=contents)
         if not res.is_success:
             raise Exception(res.reason_phrase)
@@ -360,7 +381,7 @@ class RWS_AIO:
 
         :param filename: The filename to delete
         """
-        url="/".join([self.base_url, "fileservice" , filename])
+        url="/".join([self.base_url, self._profile.url("fileservice", path=filename)])
         res=await self._session.delete(url)
         await res.aclose()
 
@@ -371,7 +392,7 @@ class RWS_AIO:
         :param path: The path to list
         :return: The filenames in the path
         """
-        res_json = await self._do_get("fileservice/" + str(path) + "")
+        res_json = await self._do_get(self._profile.url("fileservice", path=str(path)))
         state = res_json["_embedded"]["_state"]
         return [f["_title"] for f in state]
 
@@ -383,7 +404,7 @@ class RWS_AIO:
         :return: The event log entries        
         """
         o=[]
-        res_json = await self._do_get("rw/elog/" + str(elog) + "/?lang=en")
+        res_json = await self._do_get(self._profile.url("elog", elog=str(elog)))
         state = res_json["_embedded"]["_state"]
         
         for s in state:
@@ -412,7 +433,7 @@ class RWS_AIO:
         :return: The tasks and task state
         """
         o = {}
-        res_json = await self._do_get("rw/rapid/tasks")
+        res_json = await self._do_get(self._profile.url("get_tasks"))
         state = res_json["_embedded"]["_state"]
                 
         for s in state:
@@ -422,11 +443,11 @@ class RWS_AIO:
             excstate=s["excstate"]            
             try:
                 active=s["active"] == "On"
-            except:
+            except (KeyError, TypeError):
                 active=False
             try:
-              motiontask=s["motiontask"].lower() == "true"
-            except:
+                motiontask=s["motiontask"].lower() == "true"
+            except (KeyError, TypeError, AttributeError):
                 motiontask=False
 
             o[name]=TaskState(name,type_,taskstate,excstate,active,motiontask)
@@ -440,7 +461,7 @@ class RWS_AIO:
         :param mechunit: The mechanical unit to read
         :return: The current jointtarget
         """
-        res_json=await self._do_get("rw/motionsystem/mechunits/" + mechunit + "/jointtarget")
+        res_json=await self._do_get(self._profile.url("get_jointtarget", mechunit=mechunit))
         state = res_json["_embedded"]["_state"][0]
         if not state["_type"] == "ms-jointtarget":
             raise Exception("Invalid response from controller")
@@ -462,7 +483,7 @@ class RWS_AIO:
         :return: The current robtarget
 
         """
-        res_json=await self._do_get(f"rw/motionsystem/mechunits/{mechunit}/robtarget?tool={tool}&wobj={wobj}&coordinate={coordinate}")
+        res_json=await self._do_get(self._profile.url("get_robtarget", mechunit=mechunit) + f"?tool={tool}&wobj={wobj}&coordinate={coordinate}")
         state = res_json["_embedded"]["_state"][0]
         if not state["_type"] == "ms-robtargets":
             raise Exception("Invalid response from controller")
@@ -604,11 +625,12 @@ class RWS_AIO:
         
         o=[]
         
-        timeout_str=""
+        dipc_url = self._profile.url("dipc_read", queue=queue_name)
         if timeout > 0:
-            timeout_str="&timeout=" + str(timeout)
-        
-        res_json=await self._do_get("rw/dipc/" + queue_name + "/?action=dipc-read" + timeout_str)
+            sep = "&" if "?" in dipc_url else "?"
+            dipc_url += f"{sep}timeout={timeout}"
+
+        res_json=await self._do_get(dipc_url)
         for state in res_json["_embedded"]["_state"]:
             if not state["_type"] == "dipc-read-li":
                 raise Exception("Invalid response from controller")
@@ -633,7 +655,7 @@ class RWS_AIO:
 
         payload={"dipc-src-queue-name": queue_name, "dipc-cmd": str(cmd), "dipc-userdef": str(userdef), \
                  "dipc-msgtype": str(msgtype), "dipc-data": data}
-        res=await self._do_post("rw/dipc/" + target_queue + "?action=dipc-send", payload)
+        res=await self._do_post(self._profile.url("dipc_send", queue=target_queue), payload)
     
     async def get_ipc_queue(self, queue_name):
         """
@@ -641,7 +663,7 @@ class RWS_AIO:
 
         :param queue_name: The name of the queue
         """
-        res=await self._do_get("rw/dipc/" + queue_name + "?action=dipc-read")
+        res=await self._do_get(self._profile.url("dipc_read", queue=queue_name))
         return res
     
     async def try_create_ipc_queue(self, queue_name: str, queue_size: int=4440, max_msg_size: int=444):
@@ -657,7 +679,7 @@ class RWS_AIO:
         """
         try:
             payload={"dipc-queue-name": queue_name, "dipc-queue-size": str(queue_size), "dipc-max-msg-size": str(max_msg_size)}
-            await self._do_post("rw/dipc?action=dipc-create", payload)
+            await self._do_post(self._profile.url("dipc_create"), payload)
             return True
         except ABBException as e:
             if e.code==-1073445879:
@@ -673,10 +695,10 @@ class RWS_AIO:
         :param timeout: The request timeout in seconds
         """
         t1=time.time()
-        await self._do_post('users/rmmp?json=1', {'privilege': 'modify'})
+        await self._do_post(self._profile.url("rmmp"), {'privilege': 'modify'})
         while time.time() - t1 < timeout:
-            
-            res_json=self._do_get('users/rmmp/poll?json=1')
+
+            res_json=await self._do_get(self._profile.url("rmmp_poll"))
             state = res_json["_embedded"]["_state"][0]
             if not state["_type"] == "user-rmmp-poll":
                 raise Exception("Invalid response from controller")
@@ -700,11 +722,11 @@ class RWS_AIO:
         # create parallel sessions with copied session cookies
         # to maintain the connection.
         
-        url="/".join([self.base_url, 'users/rmmp/poll?json=1'])
-        
+        url="/".join([self.base_url, self._profile.url("rmmp_poll")]) + "?json=1"
+
         old_rmmp_session=None
         if self._rmmp_session is None:
-            self._do_get(url)
+            await self._do_get(url)
             self._rmmp_session=httpx.AsyncClient()
             self._rmmp_session_t=time.time()            
             
@@ -730,15 +752,15 @@ class RWS_AIO:
             self._rmmp_session=rmmp_session
             self._rmmp_session_t=time.time()
             try:
-                old_rmmp_session.aclose()
-            except:
+                await old_rmmp_session.aclose()
+            except Exception:
                 pass
        
         return state["status"] == "GRANTED"
 
     async def logout(self):
         try:
-            res=await self._do_get("logout")
+            res=await self._do_get(self._profile.url("logout"))
         finally:
             try:
                 await self._session.aclose()
@@ -766,11 +788,11 @@ class RWS_AIO:
         for r in resources:
             payload_ind += 1
             if r.resource_type == SubscriptionResourceType.ControllerState:
-                payload[f"{payload_ind}"] = "/rw/panel/ctrlstate"
+                payload[f"{payload_ind}"] = self._profile.url("sub_ctrl_state")
             elif r.resource_type == SubscriptionResourceType.OperationalMode:
-                payload[f"{payload_ind}"] = "/rw/panel/opmode"
+                payload[f"{payload_ind}"] = self._profile.url("sub_opmode")
             elif r.resource_type == SubscriptionResourceType.ExecutionState:
-                payload[f"{payload_ind}"] = "/rw/rapid/execution;ctrlexecstate"
+                payload[f"{payload_ind}"] = self._profile.url("sub_execution")
             elif r.resource_type == SubscriptionResourceType.PersVar:
                 if isinstance(r.param, str):
                     var1 = f"T_ROB1/{r.param}"
@@ -781,11 +803,11 @@ class RWS_AIO:
                         var1 = f"{task}/{var_name}"
                     else:
                         var1 = var_name
-                payload[f"{payload_ind}"] = f"/rw/rapid/symbol/data/RAPID/{var1};value"
+                payload[f"{payload_ind}"] = self._profile.url("sub_pers_var", var=var1)
             elif r.resource_type == SubscriptionResourceType.IpcQueue:
-                payload[f"{payload_ind}"] = f'/rw/dipc/{r.param}'
+                payload[f"{payload_ind}"] = self._profile.url("sub_ipc", queue=r.param)
             elif r.resource_type == SubscriptionResourceType.Elog:
-                payload[f"{payload_ind}"] = f'/rw/elog/0'
+                payload[f"{payload_ind}"] = self._profile.url("sub_elog")
             elif r.resource_type == SubscriptionResourceType.Signal:
                 if isinstance(r.param, str):
                     signal = r.param
@@ -795,7 +817,7 @@ class RWS_AIO:
                     signal = r.param["signal"]
                     network = r.param.get("network", "Local")
                     unit = r.param.get("unit", "DRV_1")
-                payload[f"{payload_ind}"] = f'/rw/iosystem/signals/{network}/{unit}/{signal};state'
+                payload[f"{payload_ind}"] = self._profile.url("sub_signal", network=network, unit=unit, signal=signal)
             else:
                 raise Exception("Invalid resource type")
             payload[f"{payload_ind}-p"] = f"{r.priority.value}"
@@ -803,7 +825,7 @@ class RWS_AIO:
         payload["resources"] = [f"{i+1}" for i in range(payload_ind)]
 
                 
-        url="/".join([self.base_url, "subscription"]) + "?json=1"
+        url="/".join([self.base_url, self._profile.url("subscription")]) + "?json=1"
         res1=await self._session.post(url, data=payload)
         try:
             res=self._process_response(res1)
@@ -842,12 +864,15 @@ class RWS_AIO:
             await self._websocket.close()            
     
     def _init_subscription_convert_message(self):
+        # Regexes match both RW6 and RW7 path formats in WebSocket messages
         self._signal_re = re.compile(r'<a\s+href="/rw/iosystem/signals/([^"]+);state"\s+rel="self"/?>.*<span\s+class="lvalue">([^<]+)<')
-        self._pers_re = re.compile(r'<a\s+href="/rw/rapid/symbol/data/RAPID/([^"]+);value"\s+rel="self"/?>.*<span\s+class="value">([^<]+)<')
+        # RW6: /rw/rapid/symbol/data/RAPID/{var};value  RW7: /rw/rapid/symbol/RAPID/{var}/data;value
+        self._pers_re = re.compile(r'<a\s+href="/rw/rapid/symbol/(?:data/)?RAPID/([^";]+?)(?:/data)?;value"\s+rel="self"/?>.*<span\s+class="value">([^<]+)<')
         self._elog_re = re.compile(r'<a\s+href="/rw/elog/0/([^"]+)"\s+rel="self"/?>.*<span\s+class="seqnum">([^<]+)<')
         self._exec_re = re.compile(r'<a\s+href="/rw/rapid/execution;ctrlexecstate"\s+rel="self"/?>.*<span\s+class="ctrlexecstate">([^<]+)<')
         self._opmode_re = re.compile(r'<a\s+href="/rw/panel/opmode"\s+rel="self"/?>.*<span\s+class="opmode">([^<]+)<')
-        self._ctrl_re = re.compile(r'<a\s+href="/rw/panel/ctrlstate"\s+rel="self"/?>.*<span\s+class="ctrlstate">([^<]+)<')
+        # RW6: /rw/panel/ctrlstate  RW7: /rw/panel/ctrl-state
+        self._ctrl_re = re.compile(r'<a\s+href="/rw/panel/ctrl-?state"\s+rel="self"/?>.*<span\s+class="ctrlstate">([^<]+)<')
         self._ipc_re = re.compile(r'<a\s+href="/rw/dipc/([^"]*)".*<span\s+class="dipc-data">([^<]+)<.*<span\s+class="dipc-userdef">([^<]+)<')
 
     def _convert_subscription_message(self, message):

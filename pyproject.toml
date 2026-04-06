@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "abb-robot-client"
+version = "0.5.0"
+description = "Python client library to access ABB robots using RWS and EGM"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+dependencies = [
+    "requests",
+    "numpy",
+    "protobuf",
+    "websocket-client",
+]
+
+[project.urls]
+Homepage = "https://github.com/johnwason/abb_robot_client"
+Documentation = "https://abb-robot-client.readthedocs.io"
+
+[project.optional-dependencies]
+aio = ["httpx", "websockets"]
+testing = ["pytest", "pytest-asyncio", "pytest-xdist"]
+robotraconteur = [
+    "robotraconteur",
+    "robotraconteurcompanion",
+    "drekar-launch-process",
+    "robotraconteur-abstract-robot",
+]
+docs = ["mkdocs-material", "mkdocstrings[python]"]
+
+[project.scripts]
+abb-robot-client-robotraconteur = "abb_robot_client.robotraconteur.abb_robotraconteur_rws_driver:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/abb_robot_client"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "win-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.9"
+requests = "*"
+numpy = "*"
+protobuf = "*"
+websocket-client = "*"
+
+[tool.pixi.pypi-dependencies]
+abb-robot-client = { path = ".", editable = true }
+
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+pytest-xdist = "*"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest test/ -x -q -n auto"
+
+[tool.pixi.feature.docs.dependencies]
+mkdocs-material = "*"
+mkdocstrings = { version = "*", extras = ["python"] }
+
+[tool.pixi.feature.docs.tasks]
+docs = "mkdocs serve"
+docs-build = "mkdocs build"
+
+[tool.pixi.environments]
+default = { features = ["test"] }
+docs = { features = ["docs"] }
